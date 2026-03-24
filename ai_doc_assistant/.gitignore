@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment variables
+.env
+
+# Django
+db.sqlite3
+media/
+
+# AI / ML
+vector_store/
+faiss_index/
+*.bin
+*.pt
+*.pth
+
+# OS
+.DS_Store
+
+# Logs
+*.log
