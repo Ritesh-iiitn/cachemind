@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
@@ -38,10 +39,16 @@ class Settings(BaseSettings):
     AGENT_TIMEOUT_SECONDS: float = 30.0
     AGENT_MAX_REWRITES: int = 2
     
-    # LLM Router Defaults
+    # LLM Router Defaults (Local)
     DEFAULT_SMALL_MODEL: str = "qwen2.5:0.5b"
     DEFAULT_MEDIUM_MODEL: str = "qwen2.5:3b"
     DEFAULT_LARGE_MODEL: str = "qwen2.5:7b"
+    
+    # Groq Cloud Inference (Optional for ultra-fast 500+ tokens/s)
+    GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY", "")
+    GROQ_SMALL_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_MEDIUM_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_LARGE_MODEL: str = "llama-3.3-70b-versatile"
     
     # Local Inference & llama.cpp
     LLAMA_CPP_BASE_URL: str = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080")

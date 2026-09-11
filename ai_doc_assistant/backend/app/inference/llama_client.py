@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import logging
@@ -10,11 +11,14 @@ logger = logging.getLogger("cachemind.llama_client")
 
 class LLMInferenceClient:
     """
-    Local LLM Client interfacing with llama.cpp or local models,
-    with built-in prompt prefix tracking and deterministic local fallback.
+    Hybrid LLM Client supporting:
+    1. Ultra-fast Groq Cloud Inference (if GROQ_API_KEY is present)
+    2. Local llama.cpp server (port 8080)
+    3. Deterministic Local Offline Synthesizer fallback
+    With built-in prompt prefix tracking and metrics telemetry.
     """
     def __init__(self):
-        self.base_url = settings.LLAMA_CPP_BASE_URL
+        self.llama_base_url = settings.LLAMA_CPP_BASE_URL
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def generate(
@@ -31,7 +35,55 @@ class LLMInferenceClient:
         # Check Prefix Cache
         prefix_stat = prefix_cache.register_or_check_prefix(full_prefix, model)
         
-        # Try local llama.cpp server if reachable
+        # 1. Check if Groq API Key is configured
+        groq_api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")
+        if groq_api_key:
+            try:
+                # Map model name to Groq model if needed
+                groq_model = "llama-3.3-70b-versatile"
+                if "0.5b" in model or "small" in model or "8b" in model:
+                    groq_model = "llama-3.1-8b-instant"
+                elif "7b" in model or "large" in model:
+                    groq_model = "llama-3.3-70b-versatile"
+
+                headers = {
+                    "Authorization": f"Bearer {groq_api_key.strip()}",
+                    "Content-Type": "application/json"
+                }
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
+
+                payload = {
+                    "model": groq_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens
+                }
+
+                res = await self.client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    content = data["choices"][0]["message"]["content"]
+                    gen_time_ms = (time.perf_counter() - start_time) * 1000.0
+                    usage = data.get("usage", {})
+                    tokens_gen = usage.get("completion_tokens", len(content.split()) * 4 // 3)
+                    logger.info(f"[Groq LLM] Model: {groq_model} generated {tokens_gen} tokens in {gen_time_ms:.1f}ms")
+                    return {
+                        "text": content,
+                        "tokens_generated": tokens_gen,
+                        "latency_ms": round(gen_time_ms, 2),
+                        "model": f"Groq/{groq_model}",
+                        "prefix_cache_hit": prefix_stat.get("hit", False),
+                        "is_live_server": True
+                    }
+                else:
+                    logger.warning(f"Groq API returned status {res.status_code}: {res.text}")
+            except Exception as e:
+                logger.error(f"Groq generation failed: {e}")
+
+        # 2. Try local llama.cpp server if reachable
         try:
             payload = {
                 "prompt": f"{full_prefix}USER: {prompt}\nASSISTANT:",
@@ -39,7 +91,7 @@ class LLMInferenceClient:
                 "temperature": temperature,
                 "model": model
             }
-            res = await self.client.post(f"{self.base_url}/completion", json=payload)
+            res = await self.client.post(f"{self.llama_base_url}/completion", json=payload)
             if res.status_code == 200:
                 data = res.json()
                 text = data.get("content", "")
@@ -54,10 +106,9 @@ class LLMInferenceClient:
                     "is_live_server": True
                 }
         except Exception:
-            # llama.cpp server not active locally; proceed to high-fidelity local synthesis
             pass
 
-        # High-fidelity Local Synthesizer (Zero-cost, works on any machine offline)
+        # 3. High-fidelity Local Synthesizer (Zero-cost, works on any machine offline)
         gen_time_ms = (time.perf_counter() - start_time) * 1000.0
         synthesis = self._local_synthesize(prompt, system_prompt)
         tokens_count = max(10, len(synthesis.split()) * 4 // 3)
@@ -73,10 +124,8 @@ class LLMInferenceClient:
 
     def _local_synthesize(self, prompt: str, system_prompt: str) -> str:
         """Deterministic context-aware answer synthesis for offline environments."""
-        # Extract evidence context from prompt if formatted with context tags
         if "Context Information:" in prompt:
             context_part = prompt.split("Context Information:")[1].split("User Question:")[0].strip()
-            # Pick the most relevant sentences from retrieved context
             sentences = [s.strip() for s in context_part.split(". ") if len(s.strip()) > 15]
             if sentences:
                 top_facts = sentences[:4]
