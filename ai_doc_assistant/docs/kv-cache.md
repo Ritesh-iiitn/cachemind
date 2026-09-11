@@ -23,7 +23,9 @@ It is critical to distinguish between application-level response caching and dee
 ## 1. Transformer Attention Complexity Analysis
 
 In standard Multi-Head Self-Attention, attention is computed as:
-$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$$
+```text
+Attention(Q, K, V) = softmax((Q · K^T) / √d_k) · V
+```
 
 ### Naive Autoregressive Attention (No KV Cache)
 At generation step $t$, the context sequence length is $N = T_{\text{prompt}} + t$.
@@ -32,7 +34,9 @@ Without a KV cache:
 2. Computes the full $N \times N$ attention matrix.
 3. Memory traffic per token generation step: $O(N \cdot d_{\text{model}})$.
 4. Total decode complexity over $T_{\text{gen}}$ tokens:
-   $$\text{Total Memory Traffic} = \sum_{t=1}^{T_{\text{gen}}} 2 \cdot (T_{\text{prompt}} + t) \cdot d_{\text{model}} \cdot \text{sizeof}(\text{float16}) \implies O(N^2)$$
+   ```text
+   Total Memory Traffic = Σ [ 2 · (T_prompt + t) · d_model · sizeof(float16) ]  ==>  O(N²) Quadratic
+   ```
 
 ### Stateful KV Cache Attention
 With a KV cache:

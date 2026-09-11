@@ -30,7 +30,10 @@
 ## 📌 Executive Overview
 
 Traditional Retrieval-Augmented Generation (RAG) pipelines follow a rigid, naive paradigm:
-$$\text{Query} \longrightarrow \text{Dense Retrieve} \longrightarrow \text{LLM Call}$$
+
+```text
+Query ────────► Dense Retrieval ────────► Full LLM Inference (No Cache / No Routing)
+```
 
 This unoptimized flow suffers from **quadratically scaling compute costs**, **high tail latencies (P95 > 2.5s)**, **redundant embeddings**, and **KV cache memory thrashing** during multi-turn generation.
 
@@ -294,22 +297,30 @@ stateDiagram-v2
 
 ### 1. Layer 1: Deterministic Exact Cache
 - **Key Equation**:
-  $$\text{Key} = \text{SHA256}\left(\text{"exact:"} + \text{kb\_id} + ":v" + \text{kb\_version} + ":" + \text{normalize}(\text{query})\right)$$
+  ```python
+  Key = SHA256(f"exact:{kb_id}:v{kb_version}:{normalize(query)}")
+  ```
 - **Normalization Pipeline**: Trims leading/trailing whitespace, folds text to lowercase, and strips invariant punctuation.
 
 ### 2. Layer 2: Semantic Vector Cache with False-Positive Guardrail
-High cosine vector similarity ($\cos(\vec{q}_1, \vec{q}_2) \ge 0.88$) can yield false positives for queries with opposing entities (e.g., *"What is the memory footprint of Model A?"* vs. *"What is the memory footprint of Model B?"*).
+High cosine vector similarity (`CosineSim(q1, q2) ≥ 0.88`) can yield false positives for queries with opposing entities (e.g., *"What is the memory footprint of Model A?"* vs. *"What is the memory footprint of Model B?"*).
 
 CacheMind prevents false positives through a **Two-Stage Validation Filter**:
-1. **Vector Stage**: Compute inner product on normalized embeddings:
-   $$S_{\text{cosine}}(\vec{q}_{\text{new}}, \vec{q}_{\text{cached}}) = \vec{q}_{\text{new}} \cdot \vec{q}_{\text{cached}} \ge 0.88$$
+1. **Vector Similarity Stage**: Compute inner product on normalized embeddings:
+   ```text
+   Cosine_Similarity(q_new, q_cached) = (q_new · q_cached) ≥ 0.88
+   ```
 2. **Entity Guardrail Stage**: Extract alphanumeric tokens and entities ($E_{\text{new}}, E_{\text{cached}}$):
-   $$\text{Overlap}(E_{\text{new}}, E_{\text{cached}}) = \frac{|E_{\text{new}} \cap E_{\text{cached}}|}{|E_{\text{new}}|} \ge 0.40$$
+   ```text
+   Entity_Overlap = |E_new ∩ E_cached| / |E_new| ≥ 0.40
+   ```
    If overlap $< 0.40$, the semantic hit is rejected and cold execution proceeds.
 
 ### 3. Layer 4: Version-Bounded Retrieval Result Cache
 Avoids redundant vector searches when re-synthesizing answers:
-$$\text{Key} = \text{SHA256}\left(\text{"retrieval:"} + \text{kb\_id} + ":v" + \text{kb\_version} + ":" + \text{strategy} + ":" + K + ":" + \text{normalize}(\text{query})\right)$$
+```python
+Key = SHA256(f"retrieval:{kb_id}:v{kb_version}:{strategy}:{top_k}:{normalize(query)}")
+```
 
 ---
 
@@ -325,16 +336,22 @@ A common point of confusion in modern GenAI systems is conflating **Application 
 
 ### Mathematical Formulation of Attention Complexity
 
-In multi-head attention:
-$$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$$
+In standard Multi-Head Self-Attention:
+```text
+Attention(Q, K, V) = softmax((Q · K^T) / √d_k) · V
+```
 
-#### Naive Attention ($O(N^2)$ Quadratic Memory Traffic)
+#### Naive Attention (O(N²) Quadratic Memory Traffic)
 At each generation step $t$, the sequence length is $N = T_{\text{prompt}} + t$. Without a KV cache, the model recomputes projections for all $N$ tokens:
-$$\text{Total Memory Bytes} = \sum_{t=1}^{T_{\text{gen}}} 2 \cdot (T_{\text{prompt}} + t) \cdot d_{\text{model}} \cdot \text{sizeof}(\text{float16}) \implies O(N^2)$$
+```text
+Total Memory Traffic = Σ [ 2 · (T_prompt + t) · d_model · sizeof(float16) ]  ==>  O(N²) Quadratic
+```
 
-#### Stateful KV Cache ($O(1)$ Constant Decode Stepping)
+#### Stateful KV Cache (O(1) Constant Decode Stepping)
 With a KV cache, past $K$ and $V$ tensors are preserved in memory. At step $t$, only the **1 new token** is projected and appended ($O(1)$ write):
-$$\text{Memory Traffic per Step} = 2 \cdot 1 \cdot d_{\text{model}} \cdot \text{sizeof}(\text{float16}) \implies O(1)$$
+```text
+Memory Traffic per Step = 2 · 1 · d_model · sizeof(float16)                   ==>  O(1) Constant
+```
 
 ### C++ Benchmark Results (`cpp/kv_benchmark/kv_cache_sim.cpp`)
 

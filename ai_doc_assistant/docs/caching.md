@@ -16,7 +16,9 @@ CacheMind implements a 5-tier caching hierarchy operating across different stage
 
 ## 1. Layer 1: Exact Response Cache
 - **Key Formulation**:
-  $$\text{Key} = \text{SHA256}\left(\text{"exact:"} + \text{kb\_id} + ":v" + \text{kb\_version} + ":" + \text{model\_id} + ":" + \text{normalize}(\text{query})\right)$$
+  ```python
+  Key = SHA256(f"exact:{kb_id}:v{kb_version}:{normalize(query)}")
+  ```
 - **Query Normalization**:
   1. Trim leading and trailing whitespace.
   2. Lowercase transformation.
@@ -30,7 +32,7 @@ High cosine similarity ($\ge 0.88$) in vector space does not guarantee semantic 
 - *"What are the advantages of Architecture B?"*
 
 These two queries have high vector similarity because of shared syntactic structures. To avoid false positives, CacheMind applies a **Two-Stage Verification Guardrail**:
-1. **Cosine Similarity Check**: $\cos(\vec{q}_1, \vec{q}_2) \ge \tau$ (default $\tau = 0.88$).
+1. **Cosine Similarity Check**: Cosine similarity $\ge \tau$ (default $\tau = 0.88$).
 2. **Entity & Identifier Overlap**: Tokenizes named entities, numerical codes, and acronyms from both queries. If the entity overlap is below $40\%$, the semantic cache hit is rejected and routed to cold execution.
 
 ---
@@ -38,7 +40,9 @@ These two queries have high vector similarity because of shared syntactic struct
 ## 3. Layer 4: Retrieval Result Cache
 When a query requires novel answer synthesis (e.g. customized user formatting), the retrieval step can still be bypassed if the exact set of chunks was retrieved previously for that query.
 - **Key Formulation**:
-  $$\text{Key} = \text{SHA256}\left(\text{"retrieval:"} + \text{kb\_id} + ":v" + \text{kb\_version} + ":" + \text{strategy} + ":" + \text{top\_k} + ":" + \text{normalize}(\text{query})\right)$$
+  ```python
+  Key = SHA256(f"retrieval:{kb_id}:v{kb_version}:{strategy}:{top_k}:{normalize(query)}")
+  ```
 
 ---
 
