@@ -1,29 +1,28 @@
+# Environments & Database
+venv/
+.env
+db.sqlite3
+data/
+*.db
+
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Virtual environments
-venv/
-.venv/
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
-# Environment variables
-.env
+# C++ Build
+cpp/build/
+*.o
+*.out
 
-# Django
-db.sqlite3
+# Media & OS
 media/
-
-# AI / ML
-vector_store/
-faiss_index/
-*.bin
-*.pt
-*.pth
-
-# OS
 .DS_Store
-
-# Logs
-*.log
