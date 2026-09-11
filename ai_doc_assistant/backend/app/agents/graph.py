@@ -176,9 +176,22 @@ class AgenticRAGEngine:
 
         # 9. Context Assembly & Inference Execution
         tracer.start_step("llm_inference_generation")
-        context_text = "\n\n".join([f"--- Chunk {i+1} (Section: {c.section or 'Doc'}) ---\n{c.text}" for i, c in enumerate(retrieved_chunks)])
-        system_prompt = "You are CacheMind, an advanced adaptive Agentic RAG assistant. Provide factual, cited answers strictly based on the provided document context."
-        user_prompt = f"Context Information:\n{context_text}\n\nUser Question: {request.query}\n\nProvide a precise synthesis based on the context."
+        context_text = "\n\n".join([f"[Source: {c.section or 'Document Section'} | Chunk {i+1}]\n{c.text}" for i, c in enumerate(retrieved_chunks)])
+        system_prompt = (
+            "You are CacheMind, a principal AI systems engineer and technical assistant. "
+            "Your task is to provide clear, high-density, professional answers formatted cleanly in Markdown.\n\n"
+            "Formatting Guidelines:\n"
+            "- Start with a clear 1-2 sentence executive summary.\n"
+            "- Use structured sections with Markdown subheadings (e.g., `### Core Findings`, `### Technical Architecture`, `### Tradeoffs & Metrics`).\n"
+            "- Use clean bullet points with bold key terms (`- **Component/Feature**: description`).\n"
+            "- If comparison or tabular data is requested, present it in a Markdown table.\n"
+            "- Ground all statements strictly in the provided document context without hallucinating."
+        )
+        user_prompt = (
+            f"Context Evidence:\n{context_text}\n\n"
+            f"User Question: {request.query}\n\n"
+            "Provide a well-structured, professional technical response following the formatting guidelines."
+        )
 
         inference_res = await llama_client.generate(
             prompt=user_prompt,
