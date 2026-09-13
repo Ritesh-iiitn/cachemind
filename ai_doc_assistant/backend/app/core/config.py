@@ -44,11 +44,11 @@ class Settings(BaseSettings):
     DEFAULT_MEDIUM_MODEL: str = "qwen2.5:3b"
     DEFAULT_LARGE_MODEL: str = "qwen2.5:7b"
     
-    # Groq Cloud Inference (Optional for ultra-fast 500+ tokens/s)
+    # Groq Cloud Inference Models
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY", "")
-    GROQ_SMALL_MODEL: str = "llama-3.1-8b-instant"
-    GROQ_MEDIUM_MODEL: str = "llama-3.3-70b-versatile"
-    GROQ_LARGE_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_SMALL_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_MEDIUM_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_LARGE_MODEL: str = "openai/gpt-oss-120b"
     
     # Local Inference & llama.cpp
     LLAMA_CPP_BASE_URL: str = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080")

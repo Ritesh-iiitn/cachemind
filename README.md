@@ -21,7 +21,8 @@
 [**KV Cache Proof**](#-low-level-kv-cache-vs-naive-attention-systems-proof) • 
 [**Benchmarks**](#-empirical-benchmarking-results) • 
 [**Quickstart Guide**](#-quickstart--local-setup) • 
-[**API Reference**](#-api-endpoints--contracts)
+[**API Reference**](#-api-endpoints--contracts) • 
+[**Production Deployment**](ai_doc_assistant/docs/deployment.md)
 
 </div>
 
@@ -468,6 +469,15 @@ cmake --build cpp/build
 source venv/bin/activate
 PYTHONPATH=. pytest backend/tests -v
 ```
+
+### 6. Production Docker Deployment (One-Click)
+```bash
+# Build and spin up FastAPI backend and Nginx-powered React frontend
+docker compose up -d --build
+```
+- **Web Dashboard**: `http://localhost:3000`
+- **FastAPI Documentation**: `http://localhost:8000/docs`
+- For detailed VPS, Cloud PaaS (Render, Railway, Vercel), and SSL configuration, see the [Full Production Deployment Guide](ai_doc_assistant/docs/deployment.md).
 
 ---
 

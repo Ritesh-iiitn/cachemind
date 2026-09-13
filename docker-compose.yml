@@ -3,21 +3,19 @@ version: '3.8'
 services:
   backend:
     build:
-      context: .
+      context: ./ai_doc_assistant
       dockerfile: Dockerfile.backend
     container_name: cachemind-backend
     restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - EMBEDDING_MODEL_NAME=all-MiniLM-L6-v2
       - LLAMA_CPP_BASE_URL=${LLAMA_CPP_BASE_URL:-http://localhost:8080}
       - USE_MOCK_LLM_IF_UNAVAILABLE=true
     volumes:
-      - ./data:/app/data
+      - ./ai_doc_assistant/data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
@@ -27,7 +25,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ./ai_doc_assistant/frontend
       dockerfile: Dockerfile.frontend
     container_name: cachemind-frontend
     restart: unless-stopped
