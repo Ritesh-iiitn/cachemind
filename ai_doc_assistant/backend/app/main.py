@@ -12,13 +12,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("cachemind.main")
 
+import asyncio
+from backend.app.queue.task_events import event_broadcaster
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up CacheMind API Gateway...")
     await init_db()
+    event_task = asyncio.create_task(event_broadcaster.start_redis_listener())
     logger.info("CacheMind ready to serve inference requests.")
     yield
     logger.info("Shutting down CacheMind API Gateway...")
+    event_task.cancel()
 
 app = FastAPI(
     title="CacheMind API Gateway",
@@ -37,6 +42,7 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(api_router, prefix="/api")
 
 @app.get("/health")
 async def health_check():
@@ -45,3 +51,4 @@ async def health_check():
         "service": "CacheMind",
         "version": settings.VERSION
     }
+

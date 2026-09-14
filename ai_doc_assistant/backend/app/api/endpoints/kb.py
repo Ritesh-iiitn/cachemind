@@ -26,7 +26,7 @@ async def get_knowledge_base(kb_id: str):
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
     return kb
 
-@router.post("/{kb_id}/documents", response_model=DocumentResponse)
+@router.post("/{kb_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     kb_id: str,
     file: UploadFile = File(...)
@@ -35,7 +35,7 @@ async def upload_document(
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
 
-    # Save temp upload
+    # Save temp upload safely
     kb_dir = settings.DOCUMENT_STORAGE / kb_id
     kb_dir.mkdir(parents=True, exist_ok=True)
     temp_path = kb_dir / file.filename
@@ -44,16 +44,51 @@ async def upload_document(
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        doc = await ingestion_service.index_document(
-            kb_id=kb_id,
-            file_path=temp_path,
-            original_filename=file.filename
+        from backend.app.api.endpoints.documents import compute_sha256
+        from backend.app.queue.task_producer import task_producer
+        import aiosqlite
+        import uuid
+
+        file_size = temp_path.stat().st_size
+        file_type = Path(file.filename).suffix.lstrip(".").lower() or "txt"
+        content_hash = compute_sha256(temp_path)
+        doc_id = f"doc_{uuid.uuid4().hex[:10]}"
+
+        # Insert document record with status queued
+        async with aiosqlite.connect(settings.DB_PATH) as db:
+            await db.execute(
+                """
+                INSERT INTO documents (
+                    id, kb_id, filename, file_type, file_size, version,
+                    status, chunk_count, content_hash
+                ) VALUES (?, ?, ?, ?, ?, 1, 'queued', 0, ?)
+                """,
+                (doc_id, kb_id, file.filename, file_type, file_size, content_hash)
+            )
+            await db.commit()
+
+        # Enqueue ingestion job
+        await task_producer.submit_ingestion_task(
+            document_id=doc_id,
+            knowledge_base_id=kb_id,
+            metadata={"filename": file.filename, "file_size": file_size, "content_hash": content_hash}
         )
-        # Automatic multi-tier cache invalidation on doc addition
-        invalidator.invalidate_knowledge_base(kb_id)
-        return doc
+
+        return DocumentResponse(
+            id=doc_id,
+            kb_id=kb_id,
+            filename=file.filename,
+            file_type=file_type,
+            file_size=file_size,
+            version=1,
+            status="queued",
+            chunk_count=0,
+            content_hash=content_hash,
+            created_at="",
+            updated_at=""
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process and index document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue document for processing: {str(e)}")
 
 @router.get("/{kb_id}/documents", response_model=List[DocumentResponse])
 async def list_documents(kb_id: str):
