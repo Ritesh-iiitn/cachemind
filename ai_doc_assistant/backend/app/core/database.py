@@ -78,10 +78,42 @@ CREATE TABLE IF NOT EXISTS benchmark_runs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS ingestion_jobs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT UNIQUE NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'default',
+    document_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+    knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    task_type TEXT NOT NULL DEFAULT 'document_ingestion',
+    status TEXT NOT NULL DEFAULT 'QUEUED',
+    priority INTEGER NOT NULL DEFAULT 5,
+    progress INTEGER NOT NULL DEFAULT 0,
+    current_stage TEXT NOT NULL DEFAULT 'queued',
+    total_items INTEGER DEFAULT 0,
+    processed_items INTEGER DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    error_code TEXT,
+    error_message TEXT,
+    worker_id TEXT,
+    queue_wait_time_ms REAL,
+    processing_time_ms REAL,
+    metadata TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_chunks_kb ON document_chunks(kb_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON document_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_docs_kb ON documents(kb_id);
 CREATE INDEX IF NOT EXISTS idx_traces_created ON execution_traces(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON ingestion_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_kb ON ingestion_jobs(knowledge_base_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_doc ON ingestion_jobs(document_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON ingestion_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_job_id ON ingestion_jobs(job_id);
 """
 
 async def init_db() -> None:
