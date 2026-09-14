@@ -17,6 +17,7 @@
 <br/>
 
 [**Explore Architecture**](#-system-architecture--uml-diagrams) • 
+[**Async Ingestion Queue**](#-asynchronous-ingestion-and-distributed-job-processing) • 
 [**Multi-Tier Caching**](#-multi-tier-caching-taxonomy) • 
 [**KV Cache Proof**](#-low-level-kv-cache-vs-naive-attention-systems-proof) • 
 [**Benchmarks**](#-empirical-benchmarking-results) • 
@@ -415,6 +416,77 @@ The frontend provides an interactive, dark-themed **AI Inference Observatory** o
 
 ---
 
+## ⚡ Asynchronous Ingestion and Distributed Job Processing
+
+### 1. Why Synchronous Ingestion Does Not Scale
+In conventional naive RAG implementations, document ingestion (parsing multi-page PDFs, OCR extraction, sentence chunking, dense vector embedding generation, and vector index persistence) occurs synchronously inside the HTTP upload request handler (`POST /api/documents`). This model creates severe operational bottlenecks:
+- **HTTP Gateway Timeouts:** Extracting and embedding a 100-page document takes 15–45 seconds. Ingress controllers (e.g., Nginx, Cloudflare), load balancers, and browsers will time out with `504 Gateway Timeout`.
+- **Resource Exhaustion & Head-of-Line Blocking:** CPU/GPU-intensive embedding generation ties up web server worker threads, rendering the API gateway incapable of servicing fast cache hits or read queries.
+- **Data Corruption on Interruptions:** If a client disconnects or the network drops mid-upload, partial database chunks and orphaned FAISS vectors remain without transactional rollback or status tracking.
+- **Zero Horizontal Scalability:** Web workers and background processing cannot be scaled independently based on backlog depth.
+
+### 2. Architecture: Redis-Backed Job Queue & Worker Pipeline
+CacheMind decouples upload ingestion admission from heavy computational processing using a resilient, multi-priority Redis queue broker, persistent SQLite job state machine, and independent background workers:
+
+```mermaid
+graph TD
+    Client["Frontend UI / Client"] -->|1. POST /api/documents/upload| API["FastAPI Gateway"]
+    API -->|2. Validate & Store File| Disk["Durable Storage (/data/documents)"]
+    API -->|3. Persist Job (status: QUEUED)| DB["SQLite Job Store"]
+    API -->|4. Push to Priority Queue| Redis["Redis Queue Broker"]
+    API -->|5. Return 202 Accepted (<50ms)| Client
+
+    subgraph Cluster ["Worker Ingestion Subsystem"]
+        Redis -->|Dequeue Job| Worker["Background Worker"]
+        Worker -->|Stage 1: 10%| P["Parser (PyMuPDF)"]
+        P -->|Stage 2: 25%| C["Text Cleaner & Normalizer"]
+        C -->|Stage 3: 40%| CH["Deterministic Chunker"]
+        CH -->|Stage 4: 70%| E["Embedding Engine + L3 Cache"]
+        E -->|Stage 5: 85%| I["Vector Store & SQLite Indexer"]
+        I -->|Stage 6: 95%| INV["Scoped Cache Invalidation"]
+        INV -->|Stage 7: 100%| CMP["Mark COMPLETED"]
+    end
+
+    Worker -.->|Heartbeat & Live Progress| RedisPubSub["Redis Pub/Sub"]
+    RedisPubSub -.->|WebSocket / SSE| Client
+```
+
+### 3. Queue Technology & Selection Rationale
+CacheMind adopts **Arq + Async Redis** (with zero-config embedded `fakeredis[lua]` fallback for local dev and CI test isolation):
+- **Why Arq over Celery?** CacheMind is built from the ground up as an async-first platform using FastAPI, `asyncio`, and `aiosqlite`. Celery was built for synchronous execution models and its integration with `asyncio` is notoriously brittle, often causing event loop conflicts. **Arq** uses native Python `async`/`await` coroutines, Redis sorted sets/streams, provides graceful shutdown via `SIGINT`/`SIGTERM`, and requires a minimal memory footprint.
+- **Queue Priority Scheduling:** Supports High, Default, Low, and Delayed queues. Urgent documents preempt background bulk corpora.
+
+### 4. Idempotency & At-Least-Once Delivery
+Queues in distributed systems provide **at-least-once delivery**, meaning a network glitch or worker restart can cause the same task to be re-delivered. CacheMind guarantees strict idempotency:
+1. **Deterministic Chunk Identifiers:** Chunk IDs are generated deterministically using:
+   $$\text{chunk\_id} = \text{chk\_} + \text{SHA256}(\text{document\_id} + \text{document\_version} + \text{chunk\_index})[:16]$$
+   Re-running chunking on the same document version generates the exact same IDs, preventing duplicate vector and database rows.
+2. **Atomic Replacement:** Before writing chunks, existing chunk records for the tuple `(document_id, document_version)` are purged within an atomic transaction.
+3. **Status Guardrails:** Workers inspect job status prior to execution. If a job is already in `COMPLETED` state, the task is acknowledged and skipped immediately.
+
+### 5. Resilient Retry Strategy & Error Classification
+CacheMind distinguishes between **transient** (recoverable) and **permanent** (fatal) failures:
+- **Transient Failures (Retryable):** Network socket timeouts, embedding API rate limits, Redis disconnects, database locks.
+  - Backoff formula: $\text{delay} = \min(\text{max\_backoff}, \text{base\_delay} \times 2^{\text{attempt} - 1})$
+  - Attempt 1: 2.0s, Attempt 2: 4.0s, Attempt 3: 8.0s (capped at 30s).
+- **Permanent Failures (Non-Retryable):** Malformed files, unsupported extensions, corrupted headers, missing files. The job transitions immediately to `FAILED` with explicit error codes, avoiding wasted compute cycles.
+- **Manual Retry API:** Administrators and users can manually re-trigger failed or cancelled jobs via `POST /api/jobs/{job_id}/retry`.
+
+### 6. Scoped Multi-Tier Cache Invalidation
+When a document finishes indexing:
+1. Knowledge base version is atomically incremented ($v \to v + 1$).
+2. Scoped invalidation purges affected entries in **L1 Exact Response Cache**, **L2 Semantic Vector Cache**, and **L4 Retrieval Cache** bound to `kb_id`.
+3. Unrelated knowledge bases remain untouched, ensuring zero false cache evictions.
+
+### 7. Real-Time Frontend Task Queue Dashboard
+The Observatory frontend includes a production-grade **Task Queue** dashboard (`/queue`):
+- **Summary Metrics Cards:** Live counts for Queued, Processing, Completed Today, Failed, Active Workers, and Average Wait/Processing Time.
+- **Real-Time Job Table:** Displays Task ID, document name, status badge, animated progress bar, current stage, attempts count, duration, and actions.
+- **Visual Pipeline Stepper Drawer:** Slide-over panel displaying the full 8-step pipeline (`Accepted ✓ → Queued ✓ → Parsing ✓ → Cleaning ✓ → Chunking ✓ → Embedding ● → Indexing ○ → Cache Invalidation ○ → Completed ○`), timing telemetry, error traces, and retry logs.
+- **Live Updates:** Bi-directional WebSockets (`/api/v1/ws/jobs`) with automatic reconnection and fallback to polling.
+
+---
+
 ## 🚀 Quickstart & Local Setup
 
 CacheMind is **100% free and runnable locally** without paid API keys.
@@ -424,7 +496,7 @@ CacheMind is **100% free and runnable locally** without paid API keys.
 - Node.js 18+ and npm
 - CMake & C++17 Compiler (Clang / GCC)
 
-### 2. Backend Setup
+### 2. Backend & Ingestion Worker Setup
 ```bash
 # 1. Clone repository
 git clone https://github.com/Ritesh-iiitn/docchat-genai.git
@@ -434,11 +506,14 @@ cd docchat-genai
 python3 -m venv venv
 source venv/bin/activate
 
-# 3. Install backend dependencies
+# 3. Install backend dependencies (FastAPI, Redis, Arq, PyTorch, FAISS)
 pip install -r backend/requirements.txt
 
 # 4. Start FastAPI Gateway Server (Port 8000)
 uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 5. Start Background Ingestion Worker (in a separate terminal)
+python -m backend.app.workers.worker
 ```
 
 ### 3. Frontend Setup
@@ -453,6 +528,15 @@ npm install
 npm run dev
 ```
 Open **http://localhost:5173** to access the Observatory.
+
+### 4. Docker Compose Setup (Distributed API + Worker + Redis + Frontend)
+```bash
+# Launch the entire distributed platform with a single command:
+docker compose up --build
+
+# Or run only the asynchronous backend stack:
+docker compose up api worker redis
+```
 
 ### 4. Native C++ KV Benchmark Engine
 ```bash
