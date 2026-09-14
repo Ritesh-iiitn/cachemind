@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { 
   Database, Upload, Plus, Trash2, FileText, 
-  CheckCircle2
+  CheckCircle2, AlertCircle, RefreshCw, Eye, Ban
 } from "lucide-react";
 import { api } from "../services/api";
 import type { KnowledgeBase as KBType, DocumentItem } from "../services/api";
+import { useJobStatus } from "../hooks/useJobStatus";
+import { TaskStatusBadge } from "../components/TaskStatusBadge";
+import { TaskProgressBar } from "../components/TaskProgressBar";
+import { TaskDetailsDrawer } from "../components/TaskDetailsDrawer";
+
 
 export const KnowledgeBase: React.FC = () => {
   const [kbs, setKbs] = useState<KBType[]>([]);
@@ -15,6 +20,11 @@ export const KnowledgeBase: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobFilename, setActiveJobFilename] = useState<string>("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const { job: activeJob, refresh: refreshActiveJob } = useJobStatus(activeJobId);
 
   const fetchKbs = async () => {
     try {
@@ -50,6 +60,16 @@ export const KnowledgeBase: React.FC = () => {
     }
   }, [selectedKb]);
 
+  // When active job completes or changes, refresh documents & KB
+  useEffect(() => {
+    if (activeJob && selectedKb) {
+      if (activeJob.status === "COMPLETED") {
+        fetchDocuments(selectedKb.id);
+        fetchKbs();
+      }
+    }
+  }, [activeJob?.status]);
+
   const handleCreateKb = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKbName.trim()) return;
@@ -70,17 +90,20 @@ export const KnowledgeBase: React.FC = () => {
     const file = e.target.files[0];
     try {
       setUploading(true);
-      setMessage(`Indexing "${file.name}" into ${selectedKb.name}...`);
-      await api.uploadDocument(selectedKb.id, file);
+      setActiveJobFilename(file.name);
+      setMessage(`Enqueuing "${file.name}" into ${selectedKb.name}...`);
+      const res = await api.uploadDocumentAsync(selectedKb.id, file);
+      setActiveJobId(res.job_id);
+      setMessage(`"${file.name}" accepted for background processing (Job ID: ${res.job_id}).`);
       await fetchDocuments(selectedKb.id);
-      await fetchKbs();
-      setMessage(`"${file.name}" indexed and cache invalidated for version v${selectedKb.version + 1}.`);
     } catch (err: any) {
       setMessage(`Upload failed: ${err.message || "Unknown error"}`);
     } finally {
       setUploading(false);
+      e.target.value = "";
     }
   };
+
 
   const handleDeleteDoc = async (docId: string, filename: string) => {
     if (!selectedKb) return;
@@ -226,6 +249,92 @@ export const KnowledgeBase: React.FC = () => {
                 </label>
               </div>
 
+              {/* Active Background Ingestion Task Card */}
+              {activeJob && (
+                <div className="p-4 rounded-2xl bg-surface/90 border border-primary/30 shadow-lg space-y-3 animate-fadeIn">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-primary" />
+                      <span className="text-xs font-semibold text-white truncate max-w-xs">
+                        {activeJob.document_name || activeJobFilename || activeJob.job_id}
+                      </span>
+                      <TaskStatusBadge status={activeJob.status} size="sm" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setDrawerOpen(true)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface border border-surfaceBorder hover:bg-slate-800 text-[11px] font-medium text-slate-300 hover:text-white transition-all"
+                      >
+                        <Eye className="h-3 w-3" />
+                        <span>View Task</span>
+                      </button>
+                      {activeJob.status === "FAILED" && (
+                        <button
+                          onClick={async () => {
+                            await api.retryJob(activeJob.job_id);
+                            refreshActiveJob();
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary hover:bg-primary-hover text-white text-[11px] font-medium transition-all"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          <span>Retry Job</span>
+                        </button>
+                      )}
+                      {(activeJob.status === "QUEUED" || activeJob.status === "PROCESSING") && (
+                        <button
+                          onClick={async () => {
+                            await api.cancelJob(activeJob.job_id);
+                            refreshActiveJob();
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-400 border border-slate-700 text-[11px] font-medium transition-all"
+                        >
+                          <Ban className="h-3 w-3" />
+                          <span>Cancel</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status Detail Content */}
+                  {activeJob.status === "PROCESSING" || activeJob.status === "QUEUED" || activeJob.status === "RETRYING" ? (
+                    <div className="space-y-2 pt-1">
+                      <TaskProgressBar
+                        progress={activeJob.progress}
+                        stage={activeJob.current_stage}
+                        status={activeJob.status}
+                        showLabel={true}
+                      />
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Job ID: <span className="font-mono text-slate-300">{activeJob.job_id}</span></span>
+                        {activeJob.queue_position ? (
+                          <span>Queue Position: <strong className="text-amber-400">#{activeJob.queue_position}</strong></span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : activeJob.status === "COMPLETED" ? (
+                    <div className="flex flex-wrap items-center justify-between text-xs text-emerald-400 bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        <span className="font-medium">Indexed successfully</span>
+                      </div>
+                      <div className="flex items-center gap-3 font-mono text-[11px] text-slate-300">
+                        <span>Chunks: <strong className="text-white">{activeJob.total_items || activeJob.metadata?.total_chunks || "—"}</strong></span>
+                        <span>Time: <strong className="text-sky-400">{activeJob.processing_time_ms ? `${(activeJob.processing_time_ms/1000).toFixed(1)}s` : "—"}</strong></span>
+                        <span>KB Version: <strong className="text-emerald-400">v{activeJob.metadata?.kb_version || selectedKb.version}</strong></span>
+                      </div>
+                    </div>
+                  ) : activeJob.status === "FAILED" ? (
+                    <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 space-y-1">
+                      <div className="flex items-center gap-1.5 font-semibold text-rose-400">
+                        <AlertCircle className="h-4 w-4" />
+                        <span>Processing failed: {activeJob.error_code || "ERROR"}</span>
+                      </div>
+                      <p className="text-[11px] font-mono text-rose-200 truncate">{activeJob.error_message}</p>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
               {/* Document List Table */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -234,6 +343,7 @@ export const KnowledgeBase: React.FC = () => {
                   </h3>
                   <span className="text-xs text-slate-500">FAISS + BM25 Multi-Index</span>
                 </div>
+
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
@@ -288,12 +398,52 @@ export const KnowledgeBase: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="py-20 text-center text-slate-500">
-              Select or create a Knowledge Base to view and manage indexed documents.
+            <div className="py-16 px-6 flex flex-col items-center justify-center text-center space-y-4">
+              <div className="p-4 rounded-2xl bg-primary/10 border border-primary/20 text-primary-light">
+                <FileText className="h-8 w-8" />
+              </div>
+              <div className="max-w-md space-y-1.5">
+                <h3 className="text-base font-semibold text-white">Create a Knowledge Base to Start Uploading</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Documents (PDF, TXT, Markdown, DOCX) must belong to a Knowledge Base so that multi-tier cache keys and FAISS vector indices are versioned and partitioned.
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      const created = await api.createKnowledgeBase("My Documents", "Primary knowledge base for document Q&A and semantic search");
+                      await fetchKbs();
+                      setSelectedKb(created);
+                      setMessage(`Knowledge Base "${created.name}" created! You can now upload PDF/text documents.`);
+                    } catch (err) {
+                      console.error("Failed to auto-create KB:", err);
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-semibold shadow-lg shadow-primary/25 transition-all"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Create Default Knowledge Base & Unlock Upload</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Task Details Drawer */}
+      <TaskDetailsDrawer
+        job={activeJob}
+        isOpen={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onJobUpdated={() => {
+          refreshActiveJob();
+          if (selectedKb) {
+            fetchDocuments(selectedKb.id);
+            fetchKbs();
+          }
+        }}
+      />
     </div>
   );
 };

@@ -212,5 +212,147 @@ export const api = {
   async listTraces(): Promise<any[]> {
     const res = await fetch(`${API_BASE}/observability/traces`);
     return res.json();
+  },
+
+  // Job Queue & Asynchronous Ingestion
+  async listJobs(params?: {
+    status?: string;
+    task_type?: string;
+    document_id?: string;
+    knowledge_base_id?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<JobListResponse> {
+    const query = new URLSearchParams();
+    if (params?.status) query.append("status", params.status);
+    if (params?.task_type) query.append("task_type", params.task_type);
+    if (params?.document_id) query.append("document_id", params.document_id);
+    if (params?.knowledge_base_id) query.append("knowledge_base_id", params.knowledge_base_id);
+    if (params?.page) query.append("page", params.page.toString());
+    if (params?.page_size) query.append("page_size", params.page_size.toString());
+
+    const res = await fetch(`${API_BASE}/jobs?${query.toString()}`);
+    return res.json();
+  },
+
+  async getJob(jobId: string): Promise<IngestionJob> {
+    const res = await fetch(`${API_BASE}/jobs/${jobId}`);
+    return res.json();
+  },
+
+  async getQueueStats(): Promise<QueueStats> {
+    const res = await fetch(`${API_BASE}/queue/stats`);
+    return res.json();
+  },
+
+  async cancelJob(jobId: string, reason?: string): Promise<IngestionJob> {
+    const res = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason })
+    });
+    return res.json();
+  },
+
+  async retryJob(jobId: string, resetAttempts: boolean = true): Promise<IngestionJob> {
+    const res = await fetch(`${API_BASE}/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reset_attempts: resetAttempts })
+    });
+    return res.json();
+  },
+
+  async uploadDocumentAsync(
+    kbId: string,
+    file: File,
+    priority: number = 5
+  ): Promise<DocumentUploadAsyncResponse> {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("knowledge_base_id", kbId);
+    formData.append("priority", priority.toString());
+
+    const res = await fetch(`${API_BASE}/documents/upload`, {
+      method: "POST",
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+      throw new Error(err.detail || "Upload failed");
+    }
+    return res.json();
   }
 };
+
+export type JobStatus = "QUEUED" | "PROCESSING" | "RETRYING" | "COMPLETED" | "FAILED" | "CANCELLED";
+
+export interface RetryHistoryItem {
+  attempt: number;
+  timestamp: string;
+  error_code?: string;
+  error_message?: string;
+  delay_seconds: number;
+}
+
+export interface IngestionJob {
+  id: string;
+  job_id: string;
+  tenant_id: string;
+  document_id?: string;
+  knowledge_base_id?: string;
+  document_name?: string;
+  task_type: string;
+  status: JobStatus;
+  priority: number;
+  progress: number;
+  current_stage: string;
+  total_items: number;
+  processed_items: number;
+  attempt_count: number;
+  max_attempts: number;
+  error_code?: string;
+  error_message?: string;
+  worker_id?: string;
+  queue_wait_time_ms?: number;
+  processing_time_ms?: number;
+  metadata: Record<string, any>;
+  retry_history: RetryHistoryItem[];
+  queue_position?: number;
+  estimated_wait_time_ms?: number;
+  created_at: string;
+  started_at?: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface JobListResponse {
+  jobs: IngestionJob[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface QueueStats {
+  queued: number;
+  processing: number;
+  completed_today: number;
+  failed_today: number;
+  cancelled_today: number;
+  active_workers: number;
+  average_wait_time_ms: number;
+  average_processing_time_ms: number;
+  queue_depth: number;
+  success_rate_pct: number;
+  retry_rate_pct: number;
+  worker_utilization_pct: number;
+}
+
+export interface DocumentUploadAsyncResponse {
+  document_id: string;
+  job_id: string;
+  status: string;
+  message: string;
+}
+

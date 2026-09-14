@@ -1,7 +1,7 @@
 import React from "react";
 import { 
   Zap, Database, Compass, Layers, 
-  BarChart3, Cpu, Activity
+  BarChart3, Cpu, Activity, Clock
 } from "lucide-react";
 
 interface NavbarProps {
@@ -13,11 +13,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: Activity },
     { id: "knowledge", label: "Knowledge Base", icon: Database },
+    { id: "queue", label: "Task Queue", icon: Clock },
     { id: "playground", label: "Query Playground", icon: Compass },
     { id: "cache", label: "Cache Explorer", icon: Layers },
     { id: "benchmarks", label: "Benchmark Lab", icon: BarChart3 },
     { id: "inference", label: "Inference Lab", icon: Cpu },
   ];
+
 
   return (
     <header className="sticky top-0 z-50 bg-surface/90 backdrop-blur-md border-b border-surfaceBorder px-6 py-3.5 flex items-center justify-between">
