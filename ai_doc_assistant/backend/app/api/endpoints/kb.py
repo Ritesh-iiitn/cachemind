@@ -26,6 +26,20 @@ async def get_knowledge_base(kb_id: str):
         raise HTTPException(status_code=404, detail="Knowledge base not found.")
     return kb
 
+@router.delete("/{kb_id}")
+async def delete_knowledge_base(kb_id: str):
+    kb = await ingestion_service.get_kb(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+
+    deleted = await ingestion_service.delete_knowledge_base(kb_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Knowledge base could not be deleted.")
+
+    invalidator.invalidate_knowledge_base(kb_id)
+    return {"status": "success", "message": f"Knowledge Base '{kb.name}' ({kb_id}) deleted successfully."}
+
+
 @router.post("/{kb_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     kb_id: str,

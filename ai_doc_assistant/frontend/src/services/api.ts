@@ -136,6 +136,10 @@ export const api = {
     });
     return res.json();
   },
+  async deleteKnowledgeBase(kbId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/kb/${kbId}`, { method: "DELETE" });
+    return res.json();
+  },
   async uploadDocument(kbId: string, file: File): Promise<DocumentItem> {
     const formData = new FormData();
     formData.append("file", file);

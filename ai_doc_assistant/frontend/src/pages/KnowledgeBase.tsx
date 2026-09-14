@@ -105,6 +105,27 @@ export const KnowledgeBase: React.FC = () => {
   };
 
 
+  const handleDeleteKb = async (kbId: string, kbName: string) => {
+    if (!window.confirm(`Delete Knowledge Base "${kbName}"? This will permanently delete all indexed documents, vector indices, and purge associated cache entries.`)) return;
+    try {
+      await api.deleteKnowledgeBase(kbId);
+      setMessage(`Knowledge Base "${kbName}" deleted successfully.`);
+      const remainingKbs = await api.listKnowledgeBases();
+      setKbs(remainingKbs);
+      if (selectedKb?.id === kbId) {
+        if (remainingKbs.length > 0) {
+          setSelectedKb(remainingKbs[0]);
+        } else {
+          setSelectedKb(null);
+          setDocuments([]);
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setMessage(`Failed to delete Knowledge Base: ${err.message || "Unknown error"}`);
+    }
+  };
+
   const handleDeleteDoc = async (docId: string, filename: string) => {
     if (!selectedKb) return;
     if (!window.confirm(`Delete "${filename}"? This will bump the KB version and invalidate cached entries.`)) return;
@@ -117,6 +138,7 @@ export const KnowledgeBase: React.FC = () => {
       console.error(err);
     }
   };
+
 
   return (
     <div className="space-y-6">
@@ -201,9 +223,22 @@ export const KnowledgeBase: React.FC = () => {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-medium truncate">{kb.name}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-primary-light border border-slate-700">
-                      v{kb.version}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-primary-light border border-slate-700">
+                        v{kb.version}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteKb(kb.id, kb.name);
+                        }}
+                        className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                        title={`Delete "${kb.name}"`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
                     <span>{kb.document_count ?? 0} docs • {kb.chunk_count ?? 0} chunks</span>
@@ -235,18 +270,30 @@ export const KnowledgeBase: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Upload Button */}
-                <label className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-medium cursor-pointer transition-all shadow-md shadow-primary/20">
-                  <Upload className="h-4 w-4" />
-                  <span>{uploading ? "Indexing..." : "Upload & Index Document"}</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.txt,.md,.markdown,.docx"
-                    onChange={handleFileUpload}
-                    disabled={uploading}
-                    className="hidden"
-                  />
-                </label>
+                {/* Actions: Delete KB and Upload Document */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteKb(selectedKb.id, selectedKb.name)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/90 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 text-xs font-medium transition-all"
+                    title="Delete this Knowledge Base and all its documents"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Delete KB</span>
+                  </button>
+
+                  <label className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-medium cursor-pointer transition-all shadow-md shadow-primary/20">
+                    <Upload className="h-4 w-4" />
+                    <span>{uploading ? "Enqueueing..." : "Upload & Index Document"}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.txt,.md,.markdown,.docx"
+                      onChange={handleFileUpload}
+                      disabled={uploading}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
               </div>
 
               {/* Active Background Ingestion Task Card */}

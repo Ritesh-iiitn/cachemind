@@ -187,6 +187,7 @@ class IngestionService:
     async def delete_document(self, kb_id: str, doc_id: str) -> bool:
         async with aiosqlite.connect(settings.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA foreign_keys = ON;")
             cursor = await db.execute("DELETE FROM documents WHERE id = ? AND kb_id = ?", (doc_id, kb_id))
             deleted = cursor.rowcount > 0
             if deleted:
@@ -194,5 +195,28 @@ class IngestionService:
                 await db.execute("UPDATE knowledge_bases SET version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (kb_id,))
                 await db.commit()
             return deleted
+
+    async def delete_knowledge_base(self, kb_id: str) -> bool:
+        async with aiosqlite.connect(settings.DB_PATH) as db:
+            await db.execute("PRAGMA foreign_keys = ON;")
+            cursor = await db.execute("DELETE FROM knowledge_bases WHERE id = ?", (kb_id,))
+            await db.commit()
+            deleted = cursor.rowcount > 0
+
+        if deleted:
+            # Clean up disk files
+            kb_dir = settings.DOCUMENT_STORAGE / kb_id
+            if kb_dir.exists():
+                shutil.rmtree(kb_dir, ignore_errors=True)
+
+            # Clean up vector indices matching this kb_id
+            if settings.VECTOR_STORAGE.exists():
+                for item in settings.VECTOR_STORAGE.glob(f"{kb_id}_*"):
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
+
+        return deleted
 
 ingestion_service = IngestionService()
