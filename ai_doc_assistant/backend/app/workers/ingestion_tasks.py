@@ -188,11 +188,15 @@ class IngestionTaskExecutor:
                 chunks=chunks
             )
 
-            # Atomically increment KB version
+            # Atomically increment KB version and mark document as indexed
             async with aiosqlite.connect(settings.DB_PATH) as db:
                 await db.execute(
                     "UPDATE knowledge_bases SET version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (target_kb_version, kb_id)
+                )
+                await db.execute(
+                    "UPDATE documents SET status = 'indexed', chunk_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (total_chunks, doc_id)
                 )
                 await db.commit()
 
@@ -282,6 +286,13 @@ class IngestionTaskExecutor:
                     error_code=error_code,
                     error_message=str(exc)
                 )
+                if job.document_id:
+                    async with aiosqlite.connect(settings.DB_PATH) as db:
+                        await db.execute(
+                            "UPDATE documents SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                            (job.document_id,)
+                        )
+                        await db.commit()
                 await queue_manager.ack(job.job_id)
                 await event_broadcaster.emit_event(
                     "job_failed",

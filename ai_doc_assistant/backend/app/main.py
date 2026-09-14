@@ -14,15 +14,45 @@ logger = logging.getLogger("cachemind.main")
 
 import asyncio
 from backend.app.queue.task_events import event_broadcaster
+from backend.app.queue.queue_manager import queue_manager
+from backend.app.workers.ingestion_tasks import ingestion_task_executor
+
+async def embedded_worker_loop():
+    """
+    In-process background worker loop running within the FastAPI gateway.
+    Consumes pending tasks from Redis or SQLite fallback, ensuring tasks complete
+    even when running in single-process or local development without Docker.
+    """
+    logger.info("Embedded in-process background worker active.")
+    while True:
+        try:
+            task_data = await queue_manager.dequeue(timeout_seconds=1.0)
+            if task_data:
+                job_id = task_data.get("job_id")
+                if job_id:
+                    logger.info(f"[gateway_worker] Dequeued task {job_id}")
+                    await ingestion_task_executor.execute_job(
+                        job_id=job_id,
+                        worker_id="gateway_embedded_worker"
+                    )
+            else:
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Embedded worker loop error: {e}")
+            await asyncio.sleep(2.0)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up CacheMind API Gateway...")
     await init_db()
     event_task = asyncio.create_task(event_broadcaster.start_redis_listener())
+    worker_task = asyncio.create_task(embedded_worker_loop())
     logger.info("CacheMind ready to serve inference requests.")
     yield
     logger.info("Shutting down CacheMind API Gateway...")
+    worker_task.cancel()
     event_task.cancel()
 
 app = FastAPI(
