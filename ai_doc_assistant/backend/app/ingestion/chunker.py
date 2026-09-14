@@ -1,4 +1,4 @@
-import uuid
+import hashlib
 import re
 from typing import List, Optional
 from backend.app.models.schemas import DocumentChunk
@@ -6,11 +6,21 @@ from backend.app.ingestion.parser import ParsedPage
 
 class TextChunker:
     """
-    Token-aware text chunker with sliding window overlap and structural metadata attachment.
+    Token-aware text chunker with sliding window overlap, structural metadata attachment,
+    and deterministic chunk identifiers for idempotent indexing.
     """
     def __init__(self, target_chunk_size: int = 500, chunk_overlap: int = 100):
         self.target_chunk_size = target_chunk_size
         self.chunk_overlap = chunk_overlap
+
+    @staticmethod
+    def generate_chunk_id(document_id: str, document_version: int, chunk_index: int) -> str:
+        """
+        Generate deterministic chunk ID: hash(document_id + document_version + chunk_index).
+        Guarantees that re-chunking an identical document yields identical IDs.
+        """
+        digest = hashlib.sha256(f"{document_id}:{document_version}:{chunk_index}".encode("utf-8")).hexdigest()
+        return f"chk_{digest[:16]}"
 
     def _approx_token_count(self, text: str) -> int:
         # 1 token ≈ 4 characters or word count * 1.3
@@ -42,7 +52,7 @@ class TextChunker:
                     
                 if len(current_chunk_words) + len(para_words) > self.target_chunk_size and current_chunk_words:
                     chunk_text = " ".join(current_chunk_words)
-                    chunk_id = f"chk_{uuid.uuid4().hex[:12]}"
+                    chunk_id = self.generate_chunk_id(document_id, document_version, chunk_idx)
                     chunks.append(
                         DocumentChunk(
                             id=chunk_id,
@@ -65,7 +75,7 @@ class TextChunker:
                     
             if current_chunk_words:
                 chunk_text = " ".join(current_chunk_words)
-                chunk_id = f"chk_{uuid.uuid4().hex[:12]}"
+                chunk_id = self.generate_chunk_id(document_id, document_version, chunk_idx)
                 chunks.append(
                     DocumentChunk(
                         id=chunk_id,
@@ -82,3 +92,4 @@ class TextChunker:
                 chunk_idx += 1
                 
         return chunks
+
